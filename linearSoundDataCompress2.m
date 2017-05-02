@@ -42,9 +42,9 @@ originalSoundMat = reshape(originalSound, spaceDim, numberOfChunks);
 
 maxLag = 1023;
 VALS = zeros(1, numberOfChunks);
-IDXS = zeros(1, numberOfChunks);
+% IDXS = zeros(1, numberOfChunks);
 allChunkSamples = cell(1, 5); % the minimum size...
-% allChunkSpectrum = cell(1, 5); % the minimum size...
+allChunkSpectrum = cell(1, 5); % the minimum size...
 minChSize = 512;
 maxChSize = 20000;
 chunkStartIdx = 1;
@@ -68,8 +68,8 @@ while minChSize<size(tmpSound, 1) % 1:numberOfChunks
     maxChSize = min(maxChSize, size(tmpSound, 1));
     [chunkLen, chunkSamples, chunkSpectrum] = minFFTrange2(tmpSound, minChSize, maxChSize, 10);
      
-    allChunkSamples{i} = tmpSound(1:chunkLen); % chunkSamples;
-    % allChunkSpectrum{i} = chunkSpectrum;
+    allChunkSamples{i} = chunkSamples; % chunkSamples;
+    allChunkSpectrum{i} = chunkSpectrum;
     tmpSound = tmpSound(chunkLen+1:end);
     
     IDXS(i) = chunkLen;
@@ -79,6 +79,7 @@ end
 
 if 0<size(tmpSound, 1)
     allChunkSamples{i} = tmpSound;
+    allChunkSpectrum{i} = fft(tmpSound);
 end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -92,7 +93,7 @@ end
 %     compSound(i) = originalSound(i)/RMSval;
 % end
 
-testSound = [];
+% testSound = [];
 
 
 % CHUNKS2 = cell(size(allChunkSamples));
@@ -106,19 +107,19 @@ for i = 1:size(allChunkSamples, 2)
     fprintf('Start cycle: %d\n', i);
     
     % Debug / test
-    testSound = [testSound; allChunkSamples{i}];
+    % testSound = [testSound; allChunkSamples{i}];
     
     chunkLengths(i) = size(allChunkSamples{i}, 1);
     
-    for k = 1:size(allChunkSamples, 2)
-        if i<=k
-            chunkCorrMat(i,k) = max(xcorr(allChunkSamples{i}, allChunkSamples{k}));
-            chunkCorrMat(k,i) = chunkCorrMat(i,k);
-        end
-    end
+%     for k = 1:size(allChunkSamples, 2)
+%         if i<=k
+%             chunkCorrMat(i,k) = max(xcorr(allChunkSamples{i}, allChunkSamples{k}));
+%             chunkCorrMat(k,i) = chunkCorrMat(i,k);
+%         end
+%     end
     
     % 
-    CHUNK = fft(allChunkSamples{i});
+    CHUNK = allChunkSpectrum{i};
     len = max(size(CHUNK));
     CHUNK = CHUNK(1:ceil((len+1)/2));
     
@@ -134,11 +135,16 @@ for i = 1:size(allChunkSamples, 2)
     %
     % 1/b Implemetation: Constant bitrate:
     %
-    frequencies = indexes(1:floor(len/4));
+    splitAt = floor(len/8);
+    frequencies = indexes(1:splitAt);
+    noiseFrequencies = indexes(splitAt+1:end);
+    
     
     dataBlock.len = len;
     dataBlock.frequencies = frequencies;
     dataBlock.values = CHUNK(frequencies);
+    dataBlock.rms = rms(allChunkSamples{i}); % UNUSED
+    dataBlock.noiseLevel = 0; % mean(abs(CHUNK(noiseFrequencies)));
     
     compressedData{i} = dataBlock;
     
@@ -154,16 +160,24 @@ for i = 1:size(compressedData, 2)
     %
     dataBlock = compressedData{i};
     
-    CHUNK = zeros(dataBlock.len, 1);
+    CHUNK = ones(dataBlock.len, 1)*dataBlock.noiseLevel;
+    CHUNK = CHUNK.*exp(rand(size(CHUNK))*pi*2j);
     %dataBlock.len = len;
     frequencies = dataBlock.frequencies;
     for k=1:max(size(frequencies))
         freq = frequencies(k);
         CHUNK(freq) = dataBlock.values(k);
-        if(freq>1)
-            CHUNK(dataBlock.len-frequencies(k)+2) = conj(dataBlock.values(k));
-        end
+%         if(freq>1)
+%             CHUNK(dataBlock.len-frequencies(k)+2) = conj(dataBlock.values(k));
+%         end
     end
+    
+    halfIdx = ((dataBlock.len+2)/2);
+    if rem(halfIdx,1) == 0 % If halfIdx is not a fraction 
+        CHUNK(halfIdx) = real(CHUNK(halfIdx))*2;
+    end
+    CHUNK(ceil(halfIdx):end) = flipud(conj(CHUNK(2:floor(halfIdx))));
+    % idx = 19416/2+1
     
     testSound = [testSound; ifft(CHUNK)];
     
@@ -171,59 +185,6 @@ end
 % sort
 
 ee = originalSound(1:2465000) - testSound(1:2465000);
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%  THIS IMPLEMENTATION SHOULD WORKS BUT TOO SLOW  %%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% while chunkStartIdx+spaceDim<size(originalSound, 1) % 1:numberOfChunks
-%     SUM = ones(1, maxChSize)*1000000; % the lower half will remain zero...
-%     
-%     for k=minChSize:maxChSize
-%         CHUNK = fft(originalSound(chunkStartIdx: chunkStartIdx+k));
-%         SUM(k) = sum(abs(CHUNK)) / size(CHUNK, 1);
-%     end
-%     
-%     [val, idx] = min(SUM);
-%     
-%     CHUNKS{i} = originalSound(chunkStartIdx: chunkStartIdx+idx);
-%     IDXS(i) = idx;
-%     chunkStartIdx = chunkStartIdx+idx;
-%     i=i+1;
-% end
-% 
-% if chunkStartIdx<size(originalSound, 1)
-%     CHUNKS{i} = originalSound(chunkStartIdx: end);
-% end
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-
-
-
-% Compute the covariance of the chunks.
-%CorrOrigSound = xcorr(originalSound);
-
-% firstRow = CorrOrigSound(numberOfChunks*spaceDim:numberOfChunks*spaceDim+spaceDim-1);
-% CovOrigSound = toeplitz(firstRow);
-% 
-% % compute the eigen vectors and values.
-% [eigVect, eigVal] = eig(CovOrigSound);
-% 
-% % The eigVect is ordered by the values. The last ones has bigger values.
-% % keep only the last numOfBases count.
-% %eigVect(:,1:spaceDim-numOfBases) = zeros(spaceDim,spaceDim-numOfBases);
-% essentialBases = eigVect(:,spaceDim-numOfBases+1:end);
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%  DO THE COMPRESSION %%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-
-% compressedDataMat = essentialBases'*originalSoundMat;
-% 
-% decompressedDataMat = essentialBases*compressedDataMat;
-% 
-% decompressedData = reshape(decompressedDataMat, numberOfChunks*spaceDim, 1);
 
 
 toc
